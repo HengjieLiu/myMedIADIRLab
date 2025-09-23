@@ -262,15 +262,24 @@ git push
 
 ```bash
 # Add the GitLab project as an *extra remote* named 'dicomviewer'
-git remote add dicomviewer git@gitlab.com:YAAF/dicomviewer.git
+# Note: Use HTTPS instead of SSH if you don't have GitLab SSH key set up
+git remote add dicomviewer https://gitlab.com/YAAF/dicomviewer.git
+
+# If git subtree command is not recognized, install git-all first: (I actually used this)
+sudo apt install git-all -y
+
+# If git subtree still not available, use direct path: (I actually used this)
+/usr/lib/git-core/git-subtree add --prefix=third_party/dicomviewer dicomviewer main --squash
 
 # Option A: Import preserving full history into a subfolder (heavy)
 # git subtree add --prefix=third_party/dicomviewer dicomviewer main
 
 # Option B: Import with --squash (keeps your repo lighter; recommended)
+# Make sure working tree is clean first: git status
 git subtree add --prefix=third_party/dicomviewer dicomviewer main --squash
 
 # Commit message is auto-generated; push to GitHub
+# If GPG signing fails, use: git push --no-gpg-sign
 git push
 ```
 
