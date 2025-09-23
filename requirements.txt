@@ -1,0 +1,8 @@
+matplotlib
+numpy
+pydicom
+PySide6
+scikit-image
+SimpleITK
+SQLAlchemy
+vtk

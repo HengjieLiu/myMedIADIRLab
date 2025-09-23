@@ -1,0 +1,64 @@
+stages:
+  - install
+  - test
+  - build
+  - deploy
+
+install:
+  stage: install
+  tags:
+    - dicom_viewer
+  image: python:3.11-slim
+  before_script:
+    - apt-get update && apt-get install -y libgl1-mesa-glx libegl1 libxkbcommon0 libx11-xcb1 libxrandr2 libxrender1 libxi6 libxcomposite1 libxcursor1 libxtst6 libxdamage1 libfontconfig1 libfreetype6 libglib2.0-0 libdbus-1-3 libharfbuzz0b xvfb mesa-utils gdb
+    - python --version
+    - pip install --upgrade pip
+  script:
+    - pip install .
+  cache:
+    key: ${CI_COMMIT_REF_SLUG}
+    paths:
+      - .venv/
+
+test:
+  stage: test
+  tags:
+    - dicom_viewer
+  image: python:3.11-slim
+  before_script:
+    - apt-get update && apt-get install -y libgl1-mesa-glx libegl1 libxkbcommon0 libx11-xcb1 libxrandr2 libxrender1 libxi6 libxcomposite1 libxcursor1 libxtst6 libxdamage1 libfontconfig1 libfreetype6 libglib2.0-0 libdbus-1-3 libharfbuzz0b xvfb mesa-utils gdb
+    - python --version
+    - pip install --upgrade pip
+    - pip install .
+    - pip install -r requirements_dev.txt
+  script:
+    - xvfb-run gdb -batch -ex "run" -ex "bt" --args python3 -m pytest -v --junitxml=test-results.xml --cov=src --cov-report=xml  # Use xvfb-run to run tests in a virtual display
+  artifacts:
+    reports:
+      junit: test-results.xml
+    paths:
+      - test-results.xml
+      - coverage.xml
+  coverage: '/^TOTAL.*\s+(\d+%)$/'
+
+build:
+  stage: build
+  tags:
+    - dicom_viewer
+  image: python:3.11-slim
+  before_script:
+    - apt-get update && apt-get install -y libgl1-mesa-glx libegl1 libxkbcommon0 libx11-xcb1 libxrandr2 libxrender1 libxi6 libxcomposite1 libxcursor1 libxtst6 libxdamage1 libfontconfig1 libfreetype6 libglib2.0-0 libdbus-1-3 libharfbuzz0b xvfb mesa-utils gdb
+    - python --version
+    - pip install --upgrade pip
+    - pip install build
+  script:
+    - python -m build
+
+deploy:
+  stage: deploy
+  tags:
+    - dicom_viewer
+  script:
+    - echo "Deploying application..."
+  only:
+    - main
