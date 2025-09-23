@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dicom-viewer"
+description = "A DICOM Viewer application using PySide6 and VTK."
+requires-python = ">=3.7"
+authors = [
+    { name = "Yasin Abdulkadir", email = "YasinAAbdulkadir@gmail.com" }
+]
+license = { text = "LGPL-3.0-only" }
+
+dynamic = ["readme", "dependencies", "version"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+readme = {file = ["README.md"]}
+version = {attr = "dicom_viewer.__version__"}
+
+[project.scripts]
+dicom-viewer = "dicom_viewer.main:main" 
+
+[tool.setuptools.packages.find]
+where = ["src"] 
+
+[tool.setuptools.package-data]
+"dicom_viewer" = ["icons/*.png", "icons/*.svg"]
+
+[tool.setuptools]
+include-package-data = true

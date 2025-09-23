@@ -1,0 +1,12 @@
+<!DOCTYPE RCC><RCC version="1.0">
+<qresource prefix="/">
+    <file>icons/branch-closed-8.png</file>
+    <file>icons/branch-closed-10.png</file>
+    <file>icons/branch-closed-12.png</file>
+    <file>icons/branch-closed-16.png</file>
+    <file>icons/branch-open-8.png</file>
+    <file>icons/branch-open-10.png</file>
+    <file>icons/branch-open-12.png</file>
+    <file>icons/branch-open-16.png</file>
+</qresource>
+</RCC>
