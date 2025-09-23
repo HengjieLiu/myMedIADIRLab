@@ -8,7 +8,50 @@
 # Check you have git and openssh
 git --version
 ssh -V
+```
 
+### 0.1) Update Git (if needed for SSH GPG signing)
+
+If your Git version is older than 2.34.0 and you want SSH GPG signing support:  
+My original git version is 2.25 which comes with the server.  
+I ended up using method 3 on shenggpu8
+
+```bash
+# Check current Git version
+git --version
+
+
+
+# Method 1: Install from Git's official PPA (Ubuntu/Debian)
+sudo apt install software-properties-common -y
+sudo add-apt-repository ppa:git-core/ppa -y
+sudo apt update
+sudo apt install git -y
+
+# Method 2: If add-apt-repository fails, manually add PPA
+echo "deb http://ppa.launchpad.net/git-core/ppa/ubuntu focal main" | sudo tee /etc/apt/sources.list.d/git-core-ppa.list
+sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys E1DD270288B4E6030699E45FA1715D88E1DF6F24
+sudo apt update
+sudo apt install git -y
+
+# Method 3: Compile from source (if PPA methods fail)
+sudo apt install -y make libssl-dev libghc-zlib-dev libcurl4-gnutls-dev libexpat1-dev gettext unzip
+cd /tmp
+wget https://github.com/git/git/archive/v2.43.0.tar.gz
+tar -xzf v2.43.0.tar.gz
+cd git-2.43.0
+make prefix=/usr/local all
+sudo make prefix=/usr/local install
+echo 'export PATH="/usr/local/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+
+# Verify new Git version
+git --version
+```
+
+### 0.2) SSH agent setup
+
+```bash
 # Optional but helpful: ensure your shell loads ssh-agent automatically
 # (If you use bash)
 grep -q "ssh-agent" ~/.bashrc || cat >> ~/.bashrc <<'EOF'
@@ -162,7 +205,8 @@ Add the GitHub remote and push:
 
 ```bash
 # Use SSH form (recommended)
-git remote add origin git@github.com:YOUR_GITHUB_USERNAME/your-repo-name.git
+git remote add origin git@github.com:[YOUR_GITHUB_USERNAME/your-repo-name.git]
+git remote add origin git@github.com:HengjieLiu/myMedIADIRLab
 
 # Name your default branch 'main' if not already
 git branch -M main
@@ -175,7 +219,7 @@ git push -u origin main
 
 ---
 
-## 5) (Optional) Pre-commit hooks (auto format & lint)
+## 5) (Optional/Skipped) Pre-commit hooks (auto format & lint)
 
 ```bash
 # Install tooling in your Python env
