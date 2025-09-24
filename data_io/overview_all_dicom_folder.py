@@ -14,7 +14,8 @@ Key Features:
 - Identifies primary image modalities (MR, CT, PT, SPECT, US, CR, DX)
 - Groups RT series (RTSTRUCT, RTPLAN, RTDOSE) separately
 - Shows summary counts for each study
-- Displays full descriptions by default (with optional truncation)
+- Displays 4-column format: Modality, Count, SeriesDescription, FolderName
+- Shows full folder names by default (with optional truncation)
 - Detects and reports unlinked RT series
 - Exports results to JSON format
 
@@ -22,7 +23,7 @@ Output Format:
 - Patient ID with all studies chronologically ordered
 - Study Date/Time and Primary Modality
 - Summary line showing counts of each series type
-- Series table with Modality, Instance Count, and Description
+- Series table with Modality, Count, SeriesDescription, and FolderName columns
 - Series ordered: Image modalities first, then RTSTRUCT, RTPLAN, RTDOSE
 - All series sorted chronologically within each modality type
 
@@ -49,7 +50,7 @@ Arguments:
     parent_folder    Path to the parent folder containing DICOM data
     --output, -o     Output file path for JSON summary (optional)
     --verbose, -v    Enable verbose output for debugging
-    --truncate, -t   Truncate long descriptions (default: show full descriptions)
+    --truncate, -t   Truncate long folder names (default: show full folder names)
 
 Requires:
     - pydicom
@@ -353,13 +354,13 @@ class DICOMOverviewScanner:
         # ReferencedSeriesSequence, etc.
         return len(all_series) > 1  # Simple heuristic: linked if there are other series
     
-    def print_overview(self, overview_data: Dict[str, Any], truncate_descriptions: bool = False):
+    def print_overview(self, overview_data: Dict[str, Any], truncate_folder_names: bool = False):
         """
-        Print the overview in a formatted table similar to the reference image.
+        Print the overview in a formatted table with 4 columns: Modality, Count, SeriesDescription, FolderName.
         
         Args:
             overview_data: Overview data dictionary
-            truncate_descriptions: Whether to truncate long descriptions
+            truncate_folder_names: Whether to truncate long folder names
         """
         print("\n" + "="*80)
         print("DICOM FOLDER OVERVIEW")
@@ -397,56 +398,60 @@ class DICOMOverviewScanner:
                 print(f"Summary: {', '.join(summary_parts)}")
                 
                 # Print series in sorted order
-                print(f"{'Modality':<10} {'Count':<6} {'Description':<40}")
-                print("-" * 60)
+                print(f"{'Modality':<10} {'Count':<6} {'SeriesDescription':<25} {'FolderName':<40}")
+                print("-" * 85)
                 
                 # Sort and print image series first
                 for series in sorted(image_series, key=lambda x: x["study_date"] + x["study_time"]):
                     modality = series["modality"]
                     count = series["instance_count"]
-                    description = series["series_description"] or series["folder_name"]
+                    series_description = series["series_description"] or ""
+                    folder_name = series["folder_name"]
                     
-                    # Truncate description if requested and too long
-                    if truncate_descriptions and len(description) > 37:
-                        description = description[:34] + "..."
+                    # Truncate folder name if requested and too long
+                    if truncate_folder_names and len(folder_name) > 37:
+                        folder_name = folder_name[:34] + "..."
                     
-                    print(f"{modality:<10} {count:<6} {description}")
+                    print(f"{modality:<10} {count:<6} {series_description:<25} {folder_name}")
                 
                 # Sort and print RTSTRUCT series
                 for series in sorted(rtstruct_series, key=lambda x: x["study_date"] + x["study_time"]):
                     modality = series["modality"]
                     count = series["instance_count"]
-                    description = series["series_description"] or series["folder_name"]
+                    series_description = series["series_description"] or ""
+                    folder_name = series["folder_name"]
                     
-                    # Truncate description if requested and too long
-                    if truncate_descriptions and len(description) > 37:
-                        description = description[:34] + "..."
+                    # Truncate folder name if requested and too long
+                    if truncate_folder_names and len(folder_name) > 37:
+                        folder_name = folder_name[:34] + "..."
                     
-                    print(f"{modality:<10} {count:<6} {description}")
+                    print(f"{modality:<10} {count:<6} {series_description:<25} {folder_name}")
                 
                 # Sort and print RTPLAN series
                 for series in sorted(rtplan_series, key=lambda x: x["study_date"] + x["study_time"]):
                     modality = series["modality"]
                     count = series["instance_count"]
-                    description = series["series_description"] or series["folder_name"]
+                    series_description = series["series_description"] or ""
+                    folder_name = series["folder_name"]
                     
-                    # Truncate description if requested and too long
-                    if truncate_descriptions and len(description) > 37:
-                        description = description[:34] + "..."
+                    # Truncate folder name if requested and too long
+                    if truncate_folder_names and len(folder_name) > 37:
+                        folder_name = folder_name[:34] + "..."
                     
-                    print(f"{modality:<10} {count:<6} {description}")
+                    print(f"{modality:<10} {count:<6} {series_description:<25} {folder_name}")
                 
                 # Sort and print RTDOSE series
                 for series in sorted(rtdose_series, key=lambda x: x["study_date"] + x["study_time"]):
                     modality = series["modality"]
                     count = series["instance_count"]
-                    description = series["series_description"] or series["folder_name"]
+                    series_description = series["series_description"] or ""
+                    folder_name = series["folder_name"]
                     
-                    # Truncate description if requested and too long
-                    if truncate_descriptions and len(description) > 37:
-                        description = description[:34] + "..."
+                    # Truncate folder name if requested and too long
+                    if truncate_folder_names and len(folder_name) > 37:
+                        folder_name = folder_name[:34] + "..."
                     
-                    print(f"{modality:<10} {count:<6} {description}")
+                    print(f"{modality:<10} {count:<6} {series_description:<25} {folder_name}")
         
         # Print unlinked series
         if overview_data["unlinked_series"]:
@@ -501,7 +506,7 @@ Examples:
         "--truncate",
         "-t",
         action="store_true",
-        help="Truncate long descriptions (default: show full descriptions)"
+        help="Truncate long folder names (default: show full folder names)"
     )
     
     args = parser.parse_args()
@@ -521,7 +526,7 @@ Examples:
         overview_data = scanner.scan_all_folders()
         
         # Print overview
-        scanner.print_overview(overview_data, truncate_descriptions=args.truncate)
+        scanner.print_overview(overview_data, truncate_folder_names=args.truncate)
         
         # Save to JSON if requested
         if args.output:
