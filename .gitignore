@@ -40,3 +40,4 @@ jupyter_lab_config.py
 
 # Docker
 *.tar.gz
+viewer_deform/
