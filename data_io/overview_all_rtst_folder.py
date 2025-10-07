@@ -14,14 +14,16 @@ Key Features:
 - Extracts all structure names from RT structure files
 - Creates a comprehensive table showing which structures exist in which files
 - Uses date-SeriesDescription format for file identification
-- Shows structure presence with 'x' markers
+- Shows structure presence with 'x' markers (default)
+- Optional volume calculation in mm³ for each structure
 
 Output Format:
 - Summary counts of RT structure files
 - Chronological study overview (for patient folders)
 - Individual RT structure file analysis with structure lists
 - Cross-reference table: structures (rows) vs files (columns)
-- Presence indicators: 'x' for existing structures, blank for missing
+- Presence indicators: 'x' for existing structures, blank for missing (default)
+- Volume display: structure volumes in mm³ when --volumes flag is used
 
 CLI Usage:
     python overview_all_rtst_folder.py <path_to_folder> [options]
@@ -44,12 +46,15 @@ Arguments:
     --output, -o      Output file path for JSON summary (optional)
     --verbose, -v     Enable verbose output for debugging
     --max-width        Maximum width for structure names in table (default: 30)
+    --volumes         Calculate and display structure volumes in mm³ (default: show 'x' markers)
 
 Requires:
     - pydicom
     - pathlib
     - collections
     - datetime
+    - numpy (for volume calculations)
+    - SimpleITK (for volume calculations)
 """
 
 import os
@@ -62,6 +67,28 @@ from datetime import datetime
 import pydicom
 from pydicom import dcmread
 from pydicom.errors import InvalidDicomError
+import numpy as np
+
+# Try to import SimpleITK for volume calculations
+try:
+    import SimpleITK as sitk
+    SITK_AVAILABLE = True
+except ImportError:
+    SITK_AVAILABLE = False
+    print("Warning: SimpleITK not available. Volume calculations will be disabled.")
+
+# Add the third_party dicomviewer to the path
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT / "third_party" / "dicomviewer" / "src"))
+
+try:
+    from dicom_viewer.readers.DICOMImageReader import DICOMImageReader
+    from dicom_viewer.readers.RTStructReader import RTStructReader
+    DICOMVIEWER_AVAILABLE = True
+except ImportError as e:
+    print(f"Warning: Could not import DICOM readers: {e}")
+    print("Continuing with basic pydicom functionality only.")
+    DICOMVIEWER_AVAILABLE = False
 
 
 class RTStructureOverviewScanner:
@@ -69,12 +96,15 @@ class RTStructureOverviewScanner:
     A class for scanning RT Structure files and generating comprehensive overviews.
     """
     
-    def __init__(self, folder_path: Path):
+    def __init__(self, folder_path: Path, calculate_volumes: bool = False, verbose: bool = False):
         self.folder_path = Path(folder_path)
         self.rtst_files = []
         self.studies = OrderedDict()  # Maintain chronological order
         self.all_structures = set()
         self.structure_file_map = defaultdict(set)  # structure_name -> set of file_ids
+        self.calculate_volumes = calculate_volumes and SITK_AVAILABLE and DICOMVIEWER_AVAILABLE
+        self.structure_volumes = defaultdict(dict)  # file_id -> {structure_name: volume}
+        self.verbose = verbose
         
     def scan_rtst_files(self) -> Dict[str, Any]:
         """
@@ -154,6 +184,11 @@ class RTStructureOverviewScanner:
                 # Extract structure information
                 structures = self._extract_structures_from_dataset(ds)
                 
+                # Calculate volumes if requested
+                structure_volumes = {}
+                if self.calculate_volumes:
+                    structure_volumes = self._calculate_structure_volumes(ds, rtst_file)
+                
                 # Store file information
                 file_info = {
                     "file_path": str(rtst_file),
@@ -163,13 +198,18 @@ class RTStructureOverviewScanner:
                     "series_description": series_description,
                     "patient_id": patient_id,
                     "structures": structures,
-                    "structure_count": len(structures)
+                    "structure_count": len(structures),
+                    "structure_volumes": structure_volumes
                 }
                 
                 # Add to our collections
                 self.all_structures.update(structures)
                 for structure in structures:
                     self.structure_file_map[structure].add(file_id)
+                
+                # Store volume information
+                if self.calculate_volumes:
+                    self.structure_volumes[file_id] = structure_volumes
                 
                 # Store file info for later organization
                 if not hasattr(self, '_file_info_list'):
@@ -204,6 +244,136 @@ class RTStructureOverviewScanner:
             print(f"Error extracting structures: {e}")
         
         return structures
+    
+    def _calculate_structure_volumes(self, ds: pydicom.Dataset, rtst_file_path: Path) -> Dict[str, float]:
+        """
+        Calculate volumes for all structures in the RT Structure file using mask-based approach.
+        
+        Args:
+            ds: pydicom Dataset
+            rtst_file_path: Path to the RT Structure file
+            
+        Returns:
+            Dictionary mapping structure names to volumes in mm³
+        """
+        volumes = {}
+        
+        try:
+            # Use dicomviewer's RTStructReader for proper mask generation
+            rtstruct_reader = RTStructReader(ds)
+            rtstruct_reader.read()
+            
+            # Get all structure names
+            structure_names = rtstruct_reader.get_structure_names()
+            
+            # Find the referenced image series
+            image_reader = self._find_referenced_image_series(ds, rtst_file_path)
+            
+            if image_reader is None:
+                if self.verbose:
+                    print(f"Warning: Could not find referenced image series for {rtst_file_path}")
+                return volumes
+            
+            # Calculate volume for each structure
+            for structure_name in structure_names:
+                try:
+                    # Generate mask for the structure
+                    mask = rtstruct_reader.get_structure_mask(structure_name, image_reader)
+                    
+                    # Calculate volume: count voxels * voxel volume
+                    voxel_count = np.sum(mask > 0)
+                    
+                    # Get voxel spacing from the image
+                    spacing = image_reader.image.GetSpacing()
+                    voxel_volume = spacing[0] * spacing[1] * spacing[2]  # mm³
+                    
+                    volume = voxel_count * voxel_volume
+                    volumes[structure_name] = volume
+                    
+                    if self.verbose:
+                        print(f"  Structure '{structure_name}': {voxel_count} voxels, "
+                              f"spacing {spacing}, volume: {volume:.2f} mm³")
+                        
+                except Exception as e:
+                    if self.verbose:
+                        print(f"Error calculating volume for structure '{structure_name}': {e}")
+                    volumes[structure_name] = 0.0
+            
+        except Exception as e:
+            print(f"Error calculating volumes for {rtst_file_path}: {e}")
+        
+        return volumes
+    
+    def _find_referenced_image_series(self, ds: pydicom.Dataset, rtst_file_path: Path) -> Optional[DICOMImageReader]:
+        """
+        Find the referenced image series for the RT Structure file.
+        
+        Args:
+            ds: pydicom Dataset
+            rtst_file_path: Path to the RT Structure file
+            
+        Returns:
+            DICOMImageReader instance or None if not found
+        """
+        try:
+            # Get referenced frame of reference sequence
+            referenced_frame_of_reference = getattr(ds, 'ReferencedFrameOfReferenceSequence', [])
+            
+            for frame_ref in referenced_frame_of_reference:
+                rt_referenced_study = getattr(frame_ref, 'RTReferencedStudySequence', [])
+                
+                for study_ref in rt_referenced_study:
+                    rt_referenced_series = getattr(study_ref, 'RTReferencedSeriesSequence', [])
+                    
+                    for series_ref in rt_referenced_series:
+                        series_instance_uid = getattr(series_ref, 'SeriesInstanceUID', None)
+                        
+                        if series_instance_uid:
+                            if self.verbose:
+                                print(f"Looking for series UID: {series_instance_uid}")
+                            
+                            # Look for the referenced series in the study directory
+                            study_dir = rtst_file_path.parent.parent  # Go up to study directory
+                            
+                            if study_dir.exists():
+                                # Search all subdirectories in the study
+                                for subdir in study_dir.iterdir():
+                                    if subdir.is_dir():
+                                        try:
+                                            # Try MR modality first (since these are MR studies)
+                                            image_reader = DICOMImageReader(
+                                                str(subdir), 
+                                                modality="MR",
+                                                series_instance_uid=series_instance_uid
+                                            )
+                                            image_reader.read()
+                                            if self.verbose:
+                                                print(f"Found MR series in: {subdir}")
+                                            return image_reader
+                                        except Exception:
+                                            # Try CT modality if MR fails
+                                            try:
+                                                image_reader = DICOMImageReader(
+                                                    str(subdir), 
+                                                    modality="CT",
+                                                    series_instance_uid=series_instance_uid
+                                                )
+                                                image_reader.read()
+                                                if self.verbose:
+                                                    print(f"Found CT series in: {subdir}")
+                                                return image_reader
+                                            except Exception:
+                                                continue
+            
+            if self.verbose:
+                print("No referenced image series found")
+            return None
+            
+        except Exception as e:
+            if self.verbose:
+                print(f"Error finding referenced image series: {e}")
+            return None
+    
     
     def _organize_by_studies(self):
         """
@@ -284,8 +454,12 @@ class RTStructureOverviewScanner:
         """
         print(f"\nCROSS-REFERENCE TABLE:")
         print("="*80)
-        print("Structure presence across RT Structure files")
-        print("'x' = structure exists, blank = structure missing")
+        if self.calculate_volumes:
+            print("Structure volumes across RT Structure files (mm³)")
+            print("Numbers = volume in mm³, blank = structure missing")
+        else:
+            print("Structure presence across RT Structure files")
+            print("'x' = structure exists, blank = structure missing")
         print("="*80)
         
         # Get all file IDs sorted
@@ -316,7 +490,22 @@ class RTStructureOverviewScanner:
             
             for file_id in all_file_ids:
                 if file_id in self.structure_file_map[structure]:
-                    row += f" {'x':<23}"
+                    if self.calculate_volumes:
+                        # Show volume if available
+                        volume = self.structure_volumes.get(file_id, {}).get(structure, 0.0)
+                        if volume > 0:
+                            # Format volume with appropriate precision
+                            if volume >= 1000:
+                                volume_str = f"{volume:.0f}"
+                            elif volume >= 1:
+                                volume_str = f"{volume:.1f}"
+                            else:
+                                volume_str = f"{volume:.2f}"
+                            row += f" {volume_str:<23}"
+                        else:
+                            row += f" {'0':<23}"
+                    else:
+                        row += f" {'x':<23}"
                 else:
                     row += f" {'':<23}"
             
@@ -350,6 +539,9 @@ Examples:
     
     # Set maximum width for structure names in table
     python overview_all_rtst_folder.py /data/hengjie/brainmets/dicom/Data/SRS3126 --max-width 40
+    
+    # Calculate and display structure volumes
+    python overview_all_rtst_folder.py /data/hengjie/brainmets/dicom/Data/SRS3126 --volumes
         """
     )
     
@@ -380,6 +572,12 @@ Examples:
         help="Maximum width for structure names in table (default: 30)"
     )
     
+    parser.add_argument(
+        "--volumes",
+        action="store_true",
+        help="Calculate and display structure volumes in mm³ (default: show 'x' markers)"
+    )
+    
     args = parser.parse_args()
     
     # Validate input path
@@ -393,7 +591,7 @@ Examples:
     
     try:
         # Create scanner and scan RT structure files
-        scanner = RTStructureOverviewScanner(args.folder_path)
+        scanner = RTStructureOverviewScanner(args.folder_path, calculate_volumes=args.volumes, verbose=args.verbose)
         overview_data = scanner.scan_rtst_files()
         
         # Print overview
