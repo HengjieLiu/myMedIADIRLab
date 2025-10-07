@@ -40,4 +40,7 @@ jupyter_lab_config.py
 
 # Docker
 *.tar.gz
+
+### Temporarily not tracked
+# Not finished (may not continue)
 viewer_deform/
