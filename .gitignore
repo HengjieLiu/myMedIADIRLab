@@ -18,8 +18,8 @@ lightning_logs/
 *.npz
 *.npy
 *.ckpt
-*.nii
-*.nii.gz
+# *.nii
+# *.nii.gz
 *.mha
 *.h5
 *.tar
