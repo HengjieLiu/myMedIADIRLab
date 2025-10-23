@@ -78,7 +78,7 @@ except ImportError:
     print("Warning: SimpleITK not available. Volume calculations will be disabled.")
 
 # Add the third_party dicomviewer to the path
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "third_party" / "dicomviewer" / "src"))
 
 try:

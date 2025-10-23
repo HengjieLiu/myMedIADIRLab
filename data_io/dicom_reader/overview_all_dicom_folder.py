@@ -73,13 +73,14 @@ from pydicom import dcmread
 from pydicom.errors import InvalidDicomError
 
 # Add the third_party dicomviewer to the path
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "third_party" / "dicomviewer" / "src"))
 
 try:
     from dicom_viewer.readers.DICOMImageReader import DICOMImageReader
     from dicom_viewer.readers.RTDoseReader import RTDoseReader
     from dicom_viewer.readers.RTStructReader import RTStructReader
+    print("dicom_viewer imported successfully (but not used in this script for now)")
 except ImportError as e:
     print(f"Warning: Could not import DICOM readers: {e}")
     print("Continuing with basic pydicom functionality only.")
