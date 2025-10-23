@@ -354,6 +354,73 @@ class DICOMOverviewScanner:
         # ReferencedSeriesSequence, etc.
         return len(all_series) > 1  # Simple heuristic: linked if there are other series
     
+    def _get_patient_folder_paths(self, patients_data: Dict[str, Any]) -> Dict[str, str]:
+        """
+        Get the folder paths for each patient by finding the common parent directory.
+        
+        Args:
+            patients_data: Dictionary containing patient data
+            
+        Returns:
+            Dictionary mapping patient IDs to their folder paths
+        """
+        patient_paths = {}
+        
+        for patient_id, patient_data in patients_data.items():
+            # Get all folder paths for this patient
+            all_paths = []
+            for study_data in patient_data["studies"].values():
+                for series in study_data["series"]:
+                    all_paths.append(Path(series["folder_path"]))
+            
+            if all_paths:
+                # Find the common parent directory that contains all series for this patient
+                # This should be the patient folder
+                common_path = all_paths[0].parent
+                for path in all_paths[1:]:
+                    # Find the common parent by going up the directory tree
+                    while not str(path).startswith(str(common_path)):
+                        common_path = common_path.parent
+                        if common_path == common_path.parent:  # Reached root
+                            break
+                
+                patient_paths[patient_id] = str(common_path)
+        
+        return patient_paths
+    
+    def _get_study_folder_paths(self, studies_data: Dict[str, Any]) -> Dict[str, str]:
+        """
+        Get the folder paths for each study by finding the common parent directory.
+        
+        Args:
+            studies_data: Dictionary containing study data
+            
+        Returns:
+            Dictionary mapping study keys to their folder paths
+        """
+        study_paths = {}
+        
+        for study_key, study_data in studies_data.items():
+            # Get all folder paths for this study
+            all_paths = []
+            for series in study_data["series"]:
+                all_paths.append(Path(series["folder_path"]))
+            
+            if all_paths:
+                # Find the common parent directory that contains all series for this study
+                # This should be the study folder
+                common_path = all_paths[0].parent
+                for path in all_paths[1:]:
+                    # Find the common parent by going up the directory tree
+                    while not str(path).startswith(str(common_path)):
+                        common_path = common_path.parent
+                        if common_path == common_path.parent:  # Reached root
+                            break
+                
+                study_paths[study_key] = str(common_path)
+        
+        return study_paths
+    
     def print_overview(self, overview_data: Dict[str, Any], truncate_folder_names: bool = False):
         """
         Print the overview in a formatted table with 4 columns: Modality, Count, SeriesDescription, FolderName.
@@ -368,13 +435,34 @@ class DICOMOverviewScanner:
         print(f"Scan Date: {overview_data['scan_timestamp']}")
         print(f"Total Patients: {overview_data['total_patients']}")
         print(f"Total Studies: {overview_data['total_studies']}")
+        
+        # Print patient summary table
+        print("\nPatient Summary:")
+        print(f"{'Patient ID':<15} {'Studies':<8}")
+        print("-" * 25)
+        for patient_id, patient_data in overview_data["patients"].items():
+            study_count = patient_data["total_studies"]
+            print(f"{patient_id:<15} {study_count:<8}")
+        
         print("="*80)
         
-        for patient_id, patient_data in overview_data["patients"].items():
+        # Get patient folder paths for display
+        patient_folder_paths = self._get_patient_folder_paths(overview_data["patients"])
+        
+        for idx, (patient_id, patient_data) in enumerate(overview_data["patients"].items(), 1):
+            total_patients = overview_data["total_patients"]
+            patient_path = patient_folder_paths.get(patient_id, "Unknown path")
+            print(f"\nPatient idx {idx}/{total_patients} and path to the patient folder: {patient_path}")
             print(f"\nPatient ID: {patient_id}")
             print("-" * 60)
             
-            for study_key, study_data in patient_data["studies"].items():
+            # Get study folder paths for this patient
+            study_folder_paths = self._get_study_folder_paths(patient_data["studies"])
+            
+            for study_idx, (study_key, study_data) in enumerate(patient_data["studies"].items(), 1):
+                total_studies_for_patient = patient_data["total_studies"]
+                study_path = study_folder_paths.get(study_key, "Unknown path")
+                print(f"\nStudy {study_idx}/{total_studies_for_patient} and path to the study folder: {study_path}")
                 print(f"\nStudy Date: {study_data['study_date']} {study_data['study_time']}")
                 print(f"Primary Modality: {study_data['primary_image_modality'] or 'None'}")
                 
