@@ -40,6 +40,9 @@ class RTDoseReader:
             dose_path_or_dataset if isinstance(dose_path_or_dataset, pydicom.Dataset) else None
         )
 
+    # def get_dose_obj(self):
+    #     return self.dataset
+
     def read(self):
         """
         Reads the RTDOSE file or dataset, extracts dose data, and applies the dose grid
@@ -64,6 +67,8 @@ class RTDoseReader:
                 self._read_from_file(dose_file)
             else:
                 self._read_from_file(self.dose_file_path)
+
+            return dose_file # HJ added
 
     def _read_from_file(self, file_path):
         """
