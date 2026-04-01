@@ -1,0 +1,3 @@
+1. Every function and class must have a docstring that clearly explains its purpose, inputs, outputs, and behavior. Parameter and return descriptions must include both type information and semantic meaning.
+2. All function and method definitions must use explicit type annotations for parameters and return values. Type hints in the signature should be supported by concise natural-language explanations in the docstring.
+3. Code should be organized in a modular manner. Functions and classes with related responsibilities should be grouped into the same Python file, and each module should serve a clear, specific purpose. For each .py file, in the beginning, add a description including the purpose of functions/classes within and list all the varible, functions and classes.
