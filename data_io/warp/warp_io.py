@@ -17,6 +17,7 @@ Variable / function / class list:
         None
 
     Functions:
+        convert_warp_nifti_to_channel_last
         read_warp_nifti_plain
         write_warp_nifti_plain
         read_warp_nifti
@@ -210,6 +211,54 @@ def write_warp_nifti_plain(
     if affine.shape != (4, 4):
         raise ValueError(f"affine must have shape (4, 4), got {affine.shape}.")
     nib.save(nib.Nifti1Image(array, affine), str(Path(path)))
+
+
+def convert_warp_nifti_to_channel_last(
+    src_path: str | Path,
+    dst_path: str | Path,
+) -> None:
+    """Convert a raw warp NIfTI file to channel-last storage.
+
+    This helper changes only the array storage layout. The affine matrix,
+    qform, sform, and copied header metadata are preserved from the source
+    file. No anatomical reorientation or unit conversion is applied.
+
+    Parameters
+    ----------
+    src_path : str | Path
+        Input warp NIfTI path. The stored vector layout is inferred from the
+        on-disk array shape.
+    dst_path : str | Path
+        Output path for the channel-last NIfTI file.
+
+    Returns
+    -------
+    None
+        The converted NIfTI file is written to disk.
+    """
+    src_nii = nib.load(str(Path(src_path)))
+    src_array = np.asarray(src_nii.dataobj)
+    src_layout = _infer_input_vector_layout(src_array)
+    dst_array = _convert_warp_vector_layout(src_array, src_layout, "channel_last")
+
+    header = src_nii.header.copy()
+    header.set_data_dtype(dst_array.dtype)
+    header.set_data_shape(dst_array.shape)
+
+    dst_nii = nib.Nifti1Image(
+        dst_array,
+        np.asarray(src_nii.affine, dtype=np.float64),
+        header=header,
+    )
+
+    qform, qform_code = src_nii.get_qform(coded=True)
+    sform, sform_code = src_nii.get_sform(coded=True)
+    dst_nii.set_qform(qform, int(qform_code))
+    dst_nii.set_sform(sform, int(sform_code))
+
+    dst_path = Path(dst_path)
+    dst_path.parent.mkdir(parents=True, exist_ok=True)
+    nib.save(dst_nii, str(dst_path))
 
 
 def read_warp_nifti(
