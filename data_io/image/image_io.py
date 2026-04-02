@@ -12,6 +12,8 @@ Variables:
 Functions:
 - nifti_to_medical_image: Convert a nibabel NIfTI object to MedicalImage.
 - medical_image_to_nifti: Convert MedicalImage to a nibabel NIfTI object.
+- read_nifti_plain: Load a NIfTI file into a raw array plus raw affine.
+- write_nifti_plain: Save a raw array plus raw affine to a NIfTI file.
 - read_nifti: Load a NIfTI file from disk into MedicalImage.
 - write_nifti_to_object: Export MedicalImage to a nibabel NIfTI object.
 - write_nifti_to_path: Save MedicalImage to a NIfTI file path.
@@ -180,6 +182,50 @@ def medical_image_to_nifti(image: MedicalImage) -> nib.Nifti1Image:
     nii.set_qform(affine_ras, code=1)
     nii.set_sform(affine_ras, code=1)
     return nii
+
+
+def read_nifti_plain(path: str | Path) -> tuple[np.ndarray, np.ndarray]:
+    """Load a NIfTI file into a raw array plus raw affine with no reorientation.
+
+    Parameters
+    ----------
+    path : str | Path
+        Filesystem path to a NIfTI image file such as `.nii` or `.nii.gz`.
+
+    Returns
+    -------
+    tuple[np.ndarray, np.ndarray]
+        A tuple containing:
+        - the raw on-disk image array, and
+        - the raw NIfTI affine in its on-disk RAS convention.
+    """
+
+    nii = nib.load(str(Path(path)))
+    return np.asarray(nii.dataobj), np.asarray(nii.affine, dtype=np.float64)
+
+
+def write_nifti_plain(array: np.ndarray, affine: np.ndarray, path: str | Path) -> None:
+    """Save a raw array plus raw affine to a NIfTI file without reorientation.
+
+    Parameters
+    ----------
+    array : np.ndarray
+        Image array to store exactly as provided.
+    affine : np.ndarray
+        Raw 4x4 NIfTI affine to store exactly as provided.
+    path : str | Path
+        Destination path for the NIfTI file.
+
+    Returns
+    -------
+    None
+        The image is written to disk.
+    """
+
+    affine = np.asarray(affine, dtype=np.float64)
+    if affine.shape != (4, 4):
+        raise ValueError(f"affine must have shape (4, 4), got {affine.shape}.")
+    nib.save(nib.Nifti1Image(np.asarray(array), affine), str(Path(path)))
 
 
 def read_nifti(path: str | Path) -> MedicalImage:
