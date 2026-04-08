@@ -4,13 +4,18 @@ Purpose:
 This module converts NIfTI files and SimpleITK images into the shared
 ``MedicalImage`` representation and writes canonical images back out to object
 or file forms. Three-dimensional images are standardized to canonical LPS+
-orientation during import.
+orientation during import. It also provides array-only conversion helpers for
+temporary interoperability with code that expects canonical RAS+ arrays.
 
 Variables:
 - None.
 
 Functions:
 - nifti_to_medical_image: Convert a nibabel NIfTI object to MedicalImage.
+- medical_image_to_ras_array: Convert a canonical MedicalImage to a temporary
+  canonical RAS+ NumPy array without exporting geometry metadata.
+- medical_image_from_ras_array_like: Build a canonical LPS+ MedicalImage from
+  a canonical RAS+ NumPy array using a reference image for geometry metadata.
 - medical_image_to_nifti: Convert MedicalImage to a nibabel NIfTI object.
 - read_nifti_plain: Load a NIfTI file into a raw array plus raw affine.
 - write_nifti_plain: Save a raw array plus raw affine to a NIfTI file.
@@ -41,6 +46,8 @@ from .image_orientLPS import (
     affine_lps_to_ras,
     affine_lps_to_sitk_metadata,
     affine_ras_to_lps,
+    is_lps,
+    reorient_canonical_spatial_array,
     reorient_spatial_array_to_lps,
     sitk_metadata_to_affine_lps,
 )
@@ -143,6 +150,89 @@ def nifti_to_medical_image(nii: nib.spatialimages.SpatialImage) -> MedicalImage:
         spatial_ndim=spatial_ndim,
         axis_labels=infer_axis_labels(spatial_ndim, array_lps.ndim),
         source_type="nifti",
+        metadata=metadata,
+    )
+
+
+def medical_image_to_ras_array(image: MedicalImage) -> np.ndarray:
+    """Convert a canonical LPS+ MedicalImage into a temporary RAS+ array.
+
+    Parameters
+    ----------
+    image : MedicalImage
+        Canonical image object whose array and affine are stored in LPS+
+        orientation.
+
+    Returns
+    -------
+    np.ndarray
+        Plain spatial-first NumPy array reoriented into canonical RAS+ order.
+        No affine or other geometry metadata is returned with this array.
+    """
+
+    if image.spatial_ndim == 3 and not is_lps(image):
+        raise ValueError(
+            "medical_image_to_ras_array expects a canonical LPS+ MedicalImage."
+        )
+
+    array_ras, _ = reorient_canonical_spatial_array(
+        array=image.array,
+        spatial_ndim=image.spatial_ndim,
+        source_orientation="LPS",
+        target_orientation="RAS",
+    )
+    return array_ras
+
+
+def medical_image_from_ras_array_like(
+    array_ras: np.ndarray,
+    reference_image: MedicalImage,
+) -> MedicalImage:
+    """Create a canonical LPS+ image from a RAS+ array and LPS+ reference.
+
+    Parameters
+    ----------
+    array_ras : np.ndarray
+        Plain spatial-first NumPy array in canonical RAS+ order. Its full
+        shape must match the reference image because this helper reuses the
+        reference geometry unchanged.
+    reference_image : MedicalImage
+        Canonical LPS+ image that provides the target affine, axis labels,
+        source type, and metadata template for the returned object.
+
+    Returns
+    -------
+    MedicalImage
+        New canonical LPS+ image whose array is obtained by converting
+        ``array_ras`` back into LPS+ order while preserving the reference
+        image geometry.
+    """
+
+    if reference_image.spatial_ndim == 3 and not is_lps(reference_image):
+        raise ValueError(
+            "medical_image_from_ras_array_like expects a canonical LPS+ reference image."
+        )
+
+    array_lps, transform_info = reorient_canonical_spatial_array(
+        array=array_ras,
+        spatial_ndim=reference_image.spatial_ndim,
+        source_orientation="RAS",
+        target_orientation="LPS",
+    )
+    if tuple(int(v) for v in array_lps.shape) != reference_image.shape:
+        raise ValueError(
+            "array_ras converted back to LPS+ must match the reference image "
+            f"shape {reference_image.shape}, got {tuple(int(v) for v in array_lps.shape)}."
+        )
+
+    metadata = dict(reference_image.metadata)
+    metadata["medical_image_from_ras_array_like"] = transform_info
+    return MedicalImage(
+        array=array_lps,
+        affine_lps=reference_image.affine_lps.copy(),
+        spatial_ndim=reference_image.spatial_ndim,
+        axis_labels=reference_image.axis_labels,
+        source_type=reference_image.source_type,
         metadata=metadata,
     )
 

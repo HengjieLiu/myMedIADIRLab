@@ -7,6 +7,10 @@ This module provides two warp-IO layers:
     2. canonical NIfTI IO that converts 3D voxel-unit displacement fields into
        canonical LPS+ orientation with channel-last storage.
 
+    It also provides array-only conversion helpers for temporary
+    interoperability with code that expects canonical RAS+ displacement arrays
+    while keeping ``MedicalWarp`` objects strictly canonical LPS+.
+
     The canonical reorientation assumes the displacement vectors are expressed
     in voxel units along image-array axes. Under that assumption the warp
     lattice is reoriented like the image lattice, and the vector components are
@@ -18,6 +22,8 @@ Variable / function / class list:
 
     Functions:
         convert_warp_nifti_to_channel_last
+        medical_warp_to_ras_array
+        medical_warp_from_ras_array_like
         read_warp_nifti_plain
         write_warp_nifti_plain
         read_warp_nifti
@@ -40,6 +46,7 @@ from ..image.image_orientLPS import (
     _NIB_LPS_LABELS,
     affine_lps_to_ras,
     affine_ras_to_lps,
+    get_axis_codes_from_affine,
 )
 from .warp_base import MedicalWarp
 
@@ -144,6 +151,194 @@ def _reorient_voxel_warp_to_lps(
         "transform_ornt": transform_ornt.tolist(),
     }
     return vector_out, reoriented_affine, metadata
+
+
+def _reorient_voxel_warp_between_canonical_orientations(
+    array_channel_last: np.ndarray,
+    spatial_ndim: int,
+    source_orientation: str,
+    target_orientation: str,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Convert a canonical voxel-unit warp array between LPS+ and RAS+.
+
+    Parameters
+    ----------
+    array_channel_last : np.ndarray
+        Canonical channel-last warp array whose vector components follow the
+        same source canonical orientation as the spatial lattice.
+    spatial_ndim : int
+        Number of spatial axes represented by the warp. Supported values are
+        ``2`` and ``3``.
+    source_orientation : str
+        Source canonical anatomical orientation. Supported values are
+        ``"LPS"`` and ``"RAS"``.
+    target_orientation : str
+        Target canonical anatomical orientation. Supported values are
+        ``"LPS"`` and ``"RAS"``.
+
+    Returns
+    -------
+    tuple[np.ndarray, dict[str, Any]]
+        A tuple containing:
+        - the reoriented channel-last warp array, and
+        - metadata describing the applied signed axis permutation.
+    """
+
+    array_channel_last = np.asarray(array_channel_last)
+    source_name = str(source_orientation).upper()
+    target_name = str(target_orientation).upper()
+
+    if spatial_ndim not in (2, 3):
+        raise ValueError(f"spatial_ndim must be 2 or 3, got {spatial_ndim}.")
+    if array_channel_last.ndim != spatial_ndim + 1:
+        raise ValueError(
+            f"array_channel_last must have ndim={spatial_ndim + 1}, got {array_channel_last.ndim}."
+        )
+    if array_channel_last.shape[-1] != spatial_ndim:
+        raise ValueError(
+            "The final vector axis must match spatial_ndim, got "
+            f"{array_channel_last.shape[-1]} and {spatial_ndim}."
+        )
+    if source_name not in ("LPS", "RAS"):
+        raise ValueError(
+            f"source_orientation must be 'LPS' or 'RAS', got {source_orientation!r}."
+        )
+    if target_name not in ("LPS", "RAS"):
+        raise ValueError(
+            f"target_orientation must be 'LPS' or 'RAS', got {target_orientation!r}."
+        )
+
+    if spatial_ndim == 2:
+        metadata_2d: dict[str, Any] = {
+            "applied": False,
+            "reason": "2d_warps_are_not_reoriented_between_canonical_orientations",
+            "source_orientation": source_name,
+            "target_orientation": target_name,
+        }
+        return array_channel_last.copy(), metadata_2d
+
+    if source_name == target_name:
+        metadata_same: dict[str, Any] = {
+            "applied": False,
+            "reason": "source_and_target_orientations_match",
+            "source_orientation": source_name,
+            "target_orientation": target_name,
+        }
+        return array_channel_last.copy(), metadata_same
+
+    source_axcodes = ("R", "A", "S") if source_name == "RAS" else LPS_AXCODES
+    target_axcodes = ("R", "A", "S") if target_name == "RAS" else LPS_AXCODES
+    source_ornt = nib.orientations.axcodes2ornt(source_axcodes)
+    target_ornt = nib.orientations.axcodes2ornt(target_axcodes)
+    transform_ornt = nib.orientations.ornt_transform(source_ornt, target_ornt)
+
+    reoriented_array = nib.orientations.apply_orientation(array_channel_last, transform_ornt)
+    vector_out = np.empty_like(reoriented_array)
+    for new_axis in range(spatial_ndim):
+        old_axis = int(transform_ornt[new_axis, 0])
+        flip_sign = float(transform_ornt[new_axis, 1])
+        vector_out[..., new_axis] = reoriented_array[..., old_axis] * flip_sign
+
+    metadata = {
+        "applied": True,
+        "source_orientation": source_name,
+        "target_orientation": target_name,
+        "source_axcodes": list(source_axcodes),
+        "target_axcodes": list(target_axcodes),
+        "transform_ornt": transform_ornt.tolist(),
+    }
+    return vector_out, metadata
+
+
+def medical_warp_to_ras_array(warp: MedicalWarp) -> np.ndarray:
+    """Convert a canonical LPS+ MedicalWarp into a temporary RAS+ array.
+
+    Parameters
+    ----------
+    warp : MedicalWarp
+        Canonical displacement-field object whose lattice and vector
+        components are stored in LPS+ orientation.
+
+    Returns
+    -------
+    np.ndarray
+        Plain channel-last NumPy array reoriented into canonical RAS+ order.
+        No affine or other geometry metadata is returned with this array.
+    """
+
+    if warp.spatial_ndim == 3:
+        current_codes = get_axis_codes_from_affine(warp.affine_lps, warp.spatial_ndim)
+        if current_codes != LPS_AXCODES:
+            raise ValueError(
+                "medical_warp_to_ras_array expects a canonical LPS+ MedicalWarp."
+            )
+
+    array_ras, _ = _reorient_voxel_warp_between_canonical_orientations(
+        array_channel_last=warp.array,
+        spatial_ndim=warp.spatial_ndim,
+        source_orientation="LPS",
+        target_orientation="RAS",
+    )
+    return array_ras
+
+
+def medical_warp_from_ras_array_like(
+    array_ras: np.ndarray,
+    reference_warp: MedicalWarp,
+) -> MedicalWarp:
+    """Create a canonical LPS+ warp from a RAS+ array and LPS+ reference.
+
+    Parameters
+    ----------
+    array_ras : np.ndarray
+        Plain channel-last displacement array in canonical RAS+ order. Its
+        full shape must match the reference warp because this helper reuses the
+        reference geometry unchanged.
+    reference_warp : MedicalWarp
+        Canonical LPS+ warp that provides the target affine, units, axis
+        labels, source type, and metadata template for the returned object.
+
+    Returns
+    -------
+    MedicalWarp
+        New canonical LPS+ warp whose array is obtained by converting
+        ``array_ras`` back into LPS+ order while preserving the reference warp
+        geometry.
+    """
+
+    if reference_warp.spatial_ndim == 3:
+        current_codes = get_axis_codes_from_affine(
+            reference_warp.affine_lps,
+            reference_warp.spatial_ndim,
+        )
+        if current_codes != LPS_AXCODES:
+            raise ValueError(
+                "medical_warp_from_ras_array_like expects a canonical LPS+ reference warp."
+            )
+
+    array_lps, transform_info = _reorient_voxel_warp_between_canonical_orientations(
+        array_channel_last=array_ras,
+        spatial_ndim=reference_warp.spatial_ndim,
+        source_orientation="RAS",
+        target_orientation="LPS",
+    )
+    if tuple(int(v) for v in array_lps.shape) != reference_warp.shape:
+        raise ValueError(
+            "array_ras converted back to LPS+ must match the reference warp "
+            f"shape {reference_warp.shape}, got {tuple(int(v) for v in array_lps.shape)}."
+        )
+
+    metadata = dict(reference_warp.metadata)
+    metadata["medical_warp_from_ras_array_like"] = transform_info
+    return MedicalWarp(
+        array=array_lps,
+        affine_lps=reference_warp.affine_lps.copy(),
+        spatial_ndim=reference_warp.spatial_ndim,
+        axis_labels=reference_warp.axis_labels,
+        units=reference_warp.units,
+        source_type=reference_warp.source_type,
+        metadata=metadata,
+    )
 
 
 def read_warp_nifti_plain(

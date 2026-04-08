@@ -2,11 +2,14 @@
 
 Purpose:
 This module centralizes image geometry logic. It converts between NIfTI RAS
-and canonical LPS, reorients 3D arrays into LPS+, derives SimpleITK geometry
-from affine matrices, and applies anatomical-direction cropping.
+and canonical LPS, reorients 3D arrays into LPS+, supports temporary
+array-only conversion between canonical LPS+ and canonical RAS+, derives
+SimpleITK geometry from affine matrices, and applies anatomical-direction
+cropping.
 
 Variables:
 - LPS_AXCODES: Target canonical axis codes for 3D spatial orientation.
+- RAS_AXCODES: Canonical RAS+ axis codes used for temporary array conversion.
 - RAS_TO_LPS_4X4: Homogeneous transform from RAS world coordinates to LPS.
 - LPS_TO_RAS_4X4: Homogeneous transform from LPS world coordinates to RAS.
 
@@ -16,6 +19,8 @@ Functions:
 - get_spacing_from_affine: Compute voxel sizes from affine basis vectors.
 - get_axis_codes_from_affine: Report anatomical axis codes for the affine.
 - is_lps: Check whether a MedicalImage already uses canonical 3D LPS+.
+- reorient_canonical_spatial_array: Convert a canonical array between LPS+
+  and RAS+ without tracking affine metadata.
 - reorient_spatial_array_to_lps: Reorder and flip a spatial-first array to LPS+.
 - to_lps: Convert a MedicalImage into canonical LPS+ orientation.
 - sitk_metadata_to_affine_lps: Build an LPS affine from SimpleITK metadata.
@@ -36,6 +41,7 @@ import numpy as np
 from .image_base import MedicalImage
 
 LPS_AXCODES: tuple[str, str, str] = ("L", "P", "S")
+RAS_AXCODES: tuple[str, str, str] = ("R", "A", "S")
 RAS_TO_LPS_4X4: np.ndarray = np.diag([-1.0, -1.0, 1.0, 1.0])
 LPS_TO_RAS_4X4: np.ndarray = np.diag([-1.0, -1.0, 1.0, 1.0])
 _NIB_LPS_LABELS: tuple[tuple[str, str], ...] = (("R", "L"), ("A", "P"), ("I", "S"))
@@ -158,6 +164,97 @@ def is_lps(image: MedicalImage) -> bool:
 
     target_codes = LPS_AXCODES[: image.spatial_ndim]
     return get_axis_codes_from_affine(image.affine_lps, image.spatial_ndim) == target_codes
+
+
+def reorient_canonical_spatial_array(
+    array: np.ndarray,
+    spatial_ndim: int,
+    source_orientation: str,
+    target_orientation: str,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Convert a canonical spatial-first array between LPS+ and RAS+.
+
+    Parameters
+    ----------
+    array : np.ndarray
+        Spatial-first voxel data whose leading spatial axes are already in a
+        canonical anatomical orientation. Extra trailing axes such as time are
+        preserved without reordering.
+    spatial_ndim : int
+        Number of spatial axes in ``array``. Supported values are ``2`` and
+        ``3``. Only ``3`` triggers anatomical reorientation because 2D arrays
+        in this project are not assigned a canonical anatomical orientation.
+    source_orientation : str
+        Source canonical orientation name. Supported values are ``"LPS"`` and
+        ``"RAS"``.
+    target_orientation : str
+        Target canonical orientation name. Supported values are ``"LPS"`` and
+        ``"RAS"``.
+
+    Returns
+    -------
+    tuple[np.ndarray, dict[str, Any]]
+        A tuple containing:
+        - the reoriented spatial-first array, and
+        - metadata describing the canonical orientation transform.
+    """
+
+    array = np.asarray(array)
+    source_name = str(source_orientation).upper()
+    target_name = str(target_orientation).upper()
+
+    if spatial_ndim not in (2, 3):
+        raise ValueError(f"spatial_ndim must be 2 or 3, got {spatial_ndim}.")
+    if array.ndim < spatial_ndim:
+        raise ValueError(
+            f"array.ndim={array.ndim} must be at least spatial_ndim={spatial_ndim}."
+        )
+    if source_name not in ("LPS", "RAS"):
+        raise ValueError(
+            f"source_orientation must be 'LPS' or 'RAS', got {source_orientation!r}."
+        )
+    if target_name not in ("LPS", "RAS"):
+        raise ValueError(
+            f"target_orientation must be 'LPS' or 'RAS', got {target_orientation!r}."
+        )
+
+    if spatial_ndim == 2:
+        metadata_2d: dict[str, Any] = {
+            "applied": False,
+            "reason": "2d_images_are_not_reoriented_between_canonical_orientations",
+            "source_orientation": source_name,
+            "target_orientation": target_name,
+        }
+        return array.copy(), metadata_2d
+
+    if source_name == target_name:
+        metadata_same: dict[str, Any] = {
+            "applied": False,
+            "reason": "source_and_target_orientations_match",
+            "source_orientation": source_name,
+            "target_orientation": target_name,
+            "transform_ornt": nib.orientations.axcodes2ornt(
+                RAS_AXCODES if source_name == "RAS" else LPS_AXCODES
+            ).tolist(),
+        }
+        return array.copy(), metadata_same
+
+    source_axcodes = RAS_AXCODES if source_name == "RAS" else LPS_AXCODES
+    target_axcodes = RAS_AXCODES if target_name == "RAS" else LPS_AXCODES
+    source_ornt = nib.orientations.axcodes2ornt(source_axcodes)
+    target_ornt = nib.orientations.axcodes2ornt(target_axcodes)
+    transform_ornt = nib.orientations.ornt_transform(source_ornt, target_ornt)
+    array_out = nib.orientations.apply_orientation(array, transform_ornt)
+
+    metadata = {
+        "applied": True,
+        "source_orientation": source_name,
+        "target_orientation": target_name,
+        "source_axcodes": list(source_axcodes),
+        "target_axcodes": list(target_axcodes),
+        "transform_ornt": transform_ornt.tolist(),
+    }
+    return array_out, metadata
 
 
 def reorient_spatial_array_to_lps(
